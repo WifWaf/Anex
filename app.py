@@ -1,35 +1,47 @@
 from flask import Flask
-from flask_cors import CORS
-from flask import Response
 from waitress import serve
-import logging
+import definitions
+from exts import db
+import uuid
+from security import Security
 
 
-# create the app
-app = Flask(__name__)
+def create_app():
+    """
+    Initialises a Flask application, configures a SQLite database, creates
+    necessary tables, generates an admin key if it doesn't exist, and registers blueprints for routing.
+    :return: The function `create_app` returns an instance of the Flask application.
+    """
+    app = Flask(__name__)
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///anex.db"
+    db.init_app(app)
 
-# configure the SQLite database, relative to the app instance folder
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///alch_test.db"
-# initialize the app with the extension
-CORS(app)
+    with app.app_context():
+        print('Initiating server ...')
+        from models import Admin
+        db.create_all()
 
-logging.basicConfig(
-    format='%(asctime)s %(levelname)-8s %(message)s',
-    level=logging.INFO,
-    datefmt='%Y-%m-%d %H:%M:%S')
+        if not Admin.query.first():
+            print('No database found. First boot? Creating database and generating admin key ..')
+            encrypted_key = Security.fernet_uuid_encrypt(uuid.uuid4())  # Create new admin key
+            admin = Admin(
+                id=encrypted_key,
+                status=definitions.STATUS_ACTIVE,
+            )
+            db.session.add(admin)
+            db.session.commit()
+            print('Please keep private and safe! Admin Key:', Security.fernet_uuid_decrypt(admin.id))
 
+        print('Database initialised')
+        print('Server has started')
 
-@app.before_request
-def basic_authentication():
-    if request.method.lower() == 'options':
-        return Response()
+    from views import main as main_blueprint
+    app.register_blueprint(main_blueprint)
+    Security.Network.init()
 
-
-from views import *
+    return app
 
 
 if __name__ == '__main__':
-    serve(app, host="localhost", port=5001)  # serve app on localhost only
-    # context = ('cert.pem', 'key.pem')
-    # app.run(debug=True, port=5001)  # or any other vacant port
-    # app.run(host='192.168.1.213', port=4002, debug=False, ssl_context=context, threaded=True)
+    app = create_app()
+    serve(app, host="localhost", port=8000)  # serve app on localhost only
